@@ -2,8 +2,12 @@ FROM golang:1.26.3-alpine3.23
 WORKDIR /src
 COPY go.mod go.sum ./
 RUN go mod download
-RUN apk add --no-cache gcc musl-dev
+RUN apk add --no-cache make bash curl jq gcc musl-dev docker-cli docker-cli-compose
 COPY cmd ./cmd
 COPY internal ./internal
 COPY tests ./tests
-RUN go test -p 2 -race ./... && go vet ./...
+COPY scripts ./scripts
+COPY build/Makefile ./build/Makefile
+COPY deploy ./deploy
+ENV GOCACHE=/tmp/go-build
+CMD ["make", "-f", "build/Makefile", "check"]

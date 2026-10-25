@@ -1,59 +1,87 @@
 .DEFAULT_GOAL := help
+.DELETE_ON_ERROR:
 
 OS ?=
-GO ?= go
 DOCKER ?= docker
-POWERSHELL ?= pwsh
-BASH ?= bash
-export GO
-export DOCKER
 COMPOSE = $(DOCKER) compose -f deploy/compose.yaml
+TOOL = $(COMPOSE) --profile tools run --rm --no-deps -e DEVICE_ID=$(DEVICE_ID) tools make -f build/Makefile
 
 DEVICES ?= 10
 INTERVAL ?= 1s
 ROUNDS ?= 10
 SEED ?= 42
+DEVICE_ID ?= meter-000001
 SERVICES ?=
 TAIL ?= 100
-export TEST_DATABASE_URL ?= postgres://telemetry:telemetry@localhost:5432/telemetry?sslmode=disable
+export DEVICES INTERVAL SEED
 
-.PHONY: help build up down stop restart ps logs config demo simulate \
-        fmt test vet check test-race test-integration smoke recovery
+ifeq ($(OS),Windows_NT)
+LOCAL_USER ?= 0:0
+else
+LOCAL_USER ?= $(shell id -u):$(shell id -g)
+endif
+
+.PHONY: help tools build up run demo simulate wait down stop restart ps logs config \
+        fmt test vet check test-race test-integration smoke recovery verify devices latest history
+
+# Recovery stops processor; verification targets must run sequentially.
+.NOTPARALLEL:
 
 help:
-	@echo make up                - Build and start the local stack
-	@echo make down              - Remove containers and keep data volumes
-	@echo make build             - Build all four Go binaries into bin/
-	@echo make stop              - Stop services without removing containers
-	@echo make restart           - Restart services, optionally SERVICES=processor
+	@echo make run               - Build, wait for readiness and run the continuous demo
+	@echo make up                - Build and start the stack, wait for readiness
+	@echo make build             - Build application and development Docker images
+	@echo make simulate          - Start the stack and publish DEVICES=10 INTERVAL=1s ROUNDS=10 SEED=42
+	@echo make devices           - Show registered devices
+	@echo make latest            - Show latest measurement, DEVICE_ID=meter-000001
+	@echo make history           - Show device history, DEVICE_ID=meter-000001
+	@echo make wait              - Wait for API, ingestion and processor readiness
 	@echo make ps                - Show container status
 	@echo make logs              - Follow logs, optionally SERVICES=processor TAIL=50
+	@echo make restart           - Restart services and wait for readiness
+	@echo make stop              - Stop services, optionally SERVICES=processor
+	@echo make down              - Remove containers and keep data volumes
 	@echo make config            - Validate Docker Compose configuration
-	@echo make demo              - Start the stack with a continuous simulator
-	@echo make simulate          - Run a finite simulator, DEVICES=10 INTERVAL=1s ROUNDS=10 SEED=42
-	@echo make fmt               - Format Go source files
-	@echo make test              - Run unit tests
-	@echo make vet               - Run go vet
-	@echo make check             - Run unit tests and go vet
-	@echo make test-race         - Run unit tests with race detector and vet in Docker
-	@echo make test-integration  - Run database and pipeline tests against the running stack
-	@echo make smoke             - Wait for readiness and run integration tests
-	@echo make recovery          - Verify processor recovery against the running stack
+	@echo make fmt               - Format Go source files in a container
+	@echo make test              - Run unit tests in a container
+	@echo make vet               - Run go vet in a container
+	@echo make check             - Run unit tests and vet in a container
+	@echo make test-race         - Run race detector and vet in a container
+	@echo make test-integration  - Start the stack and run database and pipeline tests
+	@echo make smoke             - Start the stack and verify the complete message pipeline
+	@echo make recovery          - Start the stack and verify processor recovery
+	@echo make verify            - Run check, race, smoke and recovery sequentially
+
+tools:
+	$(COMPOSE) --profile tools build tools
 
 build:
-	$(GO) build -o bin/ ./cmd/...
+	$(COMPOSE) --profile demo --profile tools build api ingestion processor simulator tools
 
-up:
-	$(COMPOSE) up -d --build
+up: tools
+	$(COMPOSE) up -d --build api ingestion processor
+	$(TOOL) wait
+
+run: demo
+
+demo: up
+	$(COMPOSE) --profile demo up -d --build --no-deps simulator
+
+simulate: up
+	$(COMPOSE) --profile demo run --rm --build --no-deps simulator -devices=$(DEVICES) -interval=$(INTERVAL) -rounds=$(ROUNDS) -seed=$(SEED)
+
+wait: tools
+	$(TOOL) wait
 
 down:
-	$(COMPOSE) --profile demo down
+	$(COMPOSE) --profile demo --profile tools down
 
 stop:
 	$(COMPOSE) --profile demo stop $(SERVICES)
 
-restart:
+restart: tools
 	$(COMPOSE) --profile demo restart $(SERVICES)
+	$(TOOL) wait
 
 ps:
 	$(COMPOSE) --profile demo ps
@@ -62,41 +90,39 @@ logs:
 	$(COMPOSE) --profile demo logs --follow --tail=$(TAIL) $(SERVICES)
 
 config:
-	$(COMPOSE) --profile demo config --quiet
+	$(COMPOSE) --profile demo --profile tools config --quiet
 
-demo:
-	$(COMPOSE) --profile demo up -d --build
+fmt: tools
+	$(COMPOSE) --profile tools run --rm --no-deps --user $(LOCAL_USER) --volume "$(CURDIR):/src" tools make -f build/Makefile fmt
 
-simulate:
-	$(COMPOSE) run --rm --build simulator -devices=$(DEVICES) -interval=$(INTERVAL) -rounds=$(ROUNDS) -seed=$(SEED)
+test: tools
+	$(TOOL) test
 
-fmt:
-	gofmt -w cmd internal tests
+vet: tools
+	$(TOOL) vet
 
-test:
-	$(GO) test ./...
+check: tools
+	$(TOOL) check
 
-vet:
-	$(GO) vet ./...
+test-race: tools
+	$(TOOL) test-race
 
-check: test vet
+test-integration: up
+	$(TOOL) test-integration
 
-test-race:
-	$(DOCKER) build -f deploy/Dockerfile.test -t diplom-tests .
+smoke: up
+	$(TOOL) smoke
 
-test-integration:
-	$(GO) test -tags=integration -count=1 -v ./internal/storage ./tests/e2e
+recovery: up
+	$(COMPOSE) --profile tools run --rm --no-deps recovery
 
-ifeq ($(OS),Windows_NT)
-smoke:
-	$(POWERSHELL) -NoProfile -File scripts/smoke.ps1
+verify: check test-race smoke recovery
 
-recovery:
-	$(POWERSHELL) -NoProfile -File scripts/verify-recovery.ps1
-else
-smoke:
-	$(BASH) scripts/smoke.sh
+devices: tools
+	$(TOOL) devices
 
-recovery:
-	$(BASH) scripts/verify-recovery.sh
-endif
+latest: tools
+	$(TOOL) latest
+
+history: tools
+	$(TOOL) history

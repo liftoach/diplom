@@ -32,15 +32,15 @@ func TestMQTTKafkaDatabaseAPI(t *testing.T) {
 	defer cancel()
 	base := env("TEST_API_URL", "http://localhost:8080")
 	client := &http.Client{Timeout: 3 * time.Second}
-	for _, port := range []string{"8080", "8081", "8082"} {
-		req, _ := http.NewRequestWithContext(ctx, "GET", "http://localhost:"+port+"/health/ready", nil)
+	for _, endpoint := range []string{base, env("TEST_INGESTION_URL", "http://localhost:8081"), env("TEST_PROCESSOR_URL", "http://localhost:8082")} {
+		req, _ := http.NewRequestWithContext(ctx, "GET", endpoint+"/health/ready", nil)
 		resp, err := client.Do(req)
 		if err != nil {
 			t.Fatal(err)
 		}
 		resp.Body.Close()
 		if resp.StatusCode != 200 {
-			t.Fatalf("service %s not ready: %d", port, resp.StatusCode)
+			t.Fatalf("service %s not ready: %d", endpoint, resp.StatusCode)
 		}
 	}
 	id := fmt.Sprintf("e2e-%d", time.Now().UnixNano())

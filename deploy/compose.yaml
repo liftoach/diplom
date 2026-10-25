@@ -113,14 +113,44 @@ services:
     environment:
       <<: *environment
       API_URL: http://api:8080
-    command: ["-devices=10", "-interval=1s", "-rounds=0"]
+    command: ["-devices=${DEVICES:-10}", "-interval=${INTERVAL:-1s}", "-rounds=0", "-seed=${SEED:-42}"]
     ports: ["127.0.0.1:8083:8083"]
     depends_on:
       api: {condition: service_started}
       ingestion: {condition: service_started}
       processor: {condition: service_started}
 
+  tools:
+    image: diplom-tools:local
+    profiles: ["tools"]
+    init: true
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile.test
+    environment: &test-environment
+      API_URL: http://api:8080
+      INGESTION_URL: http://ingestion:8081
+      PROCESSOR_URL: http://processor:8082
+      TEST_API_URL: http://api:8080
+      TEST_INGESTION_URL: http://ingestion:8081
+      TEST_PROCESSOR_URL: http://processor:8082
+      TEST_DATABASE_URL: postgres://telemetry:telemetry@database:5432/telemetry?sslmode=disable
+      TEST_MQTT_URL: tcp://mqtt:1883
+      TEST_KAFKA_BROKER: kafka:9092
+    volumes:
+      - go-build-cache:/tmp/go-build
+
+  recovery:
+    image: diplom-tools:local
+    profiles: ["tools"]
+    init: true
+    environment: *test-environment
+    command: ["make", "-f", "build/Makefile", "recovery"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
 volumes:
   database-data:
   mqtt-data:
   kafka-data:
+  go-build-cache:

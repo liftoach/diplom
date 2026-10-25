@@ -1,11 +1,13 @@
 FROM golang:1.26.3-alpine3.23 AS build
 WORKDIR /src
+RUN apk add --no-cache make
 COPY go.mod go.sum ./
 RUN go mod download
 COPY cmd ./cmd
 COPY internal ./internal
+COPY build/Makefile ./build/Makefile
 ARG SERVICE
-RUN CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/service ./cmd/${SERVICE}
+RUN make -f build/Makefile build-service SERVICE=${SERVICE}
 
 FROM scratch
 COPY --from=build /out/service /service

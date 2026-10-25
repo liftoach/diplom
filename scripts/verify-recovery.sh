@@ -38,7 +38,7 @@ api -H 'Content-Type: application/json' --data-binary "$body" \
 stopped=1
 compose stop processor
 for sequence in 1 2 3; do
-    timestamp=$(date -u +'%Y-%m-%dT%H:%M:%S.%NZ')
+    timestamp=$(date -u +'%Y-%m-%dT%H:%M:%SZ')
     payload=$(jq -nc --arg id "$device_id" --arg session "$session_id" \
         --arg timestamp "$timestamp" --argjson sequence "$sequence" \
         '{schema_version:1,message_id:("message-"+($sequence|tostring)),
