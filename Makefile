@@ -1,5 +1,6 @@
 .DEFAULT_GOAL := help
 
+OS ?=
 GO ?= go
 DOCKER ?= docker
 POWERSHELL ?= pwsh
