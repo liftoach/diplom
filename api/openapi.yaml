@@ -1,0 +1,189 @@
+openapi: 3.1.0
+info:
+  title: Electrical Telemetry API
+  version: 0.1.0
+  description: First vertical slice. Devices, latest readings and bounded history.
+servers:
+  - url: http://localhost:8080
+paths:
+  /api/v1/devices:
+    post:
+      operationId: registerDevice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: {$ref: '#/components/schemas/DeviceInput'}
+      responses:
+        '201':
+          description: Registered
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Device'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '409':
+          description: Device already exists
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Error'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+    get:
+      operationId: listDevices
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - name: after
+          in: query
+          schema: {$ref: '#/components/schemas/Identifier'}
+      responses:
+        '200':
+          description: Ordered by device ID; empty next_after marks the final page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, next_after]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/Device'}
+                  next_after: {type: string}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/devices/{id}:
+    parameters:
+      - {$ref: '#/components/parameters/DeviceID'}
+    get:
+      operationId: getDevice
+      responses:
+        '200':
+          description: Registered device
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Device'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/devices/{id}/latest:
+    parameters:
+      - {$ref: '#/components/parameters/DeviceID'}
+    get:
+      operationId: getLatestMeasurement
+      responses:
+        '200':
+          description: Measurement with greatest timestamp and message_id
+          content:
+            application/json:
+              schema: {$ref: '#/components/schemas/Event'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+  /api/v1/devices/{id}/measurements:
+    parameters:
+      - {$ref: '#/components/parameters/DeviceID'}
+    get:
+      operationId: getMeasurementHistory
+      description: Descending timestamp/message_id order; range [from,to), at most 7 days. Preserve returned from/to when following next.
+      parameters:
+        - {$ref: '#/components/parameters/Limit'}
+        - name: from
+          in: query
+          description: Defaults to one hour before to
+          schema: {type: string, format: date-time}
+        - name: to
+          in: query
+          description: Defaults to current server time
+          schema: {type: string, format: date-time}
+        - name: before
+          in: query
+          description: Cursor time; requires before_message_id
+          schema: {type: string, format: date-time}
+        - name: before_message_id
+          in: query
+          schema: {$ref: '#/components/schemas/Identifier'}
+      responses:
+        '200':
+          description: Measurement history; next is null at the final page
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items, from, to, next]
+                properties:
+                  items:
+                    type: array
+                    items: {$ref: '#/components/schemas/Event'}
+                  from: {type: string, format: date-time}
+                  to: {type: string, format: date-time}
+                  next:
+                    oneOf:
+                      - type: 'null'
+                      - type: object
+                        required: [before, before_message_id]
+                        properties:
+                          before: {type: string, format: date-time}
+                          before_message_id: {$ref: '#/components/schemas/Identifier'}
+        '400': {$ref: '#/components/responses/BadRequest'}
+        '404': {$ref: '#/components/responses/NotFound'}
+        '503': {$ref: '#/components/responses/Unavailable'}
+components:
+  parameters:
+    DeviceID:
+      name: id
+      in: path
+      required: true
+      schema: {$ref: '#/components/schemas/Identifier'}
+    Limit:
+      name: limit
+      in: query
+      schema: {type: integer, minimum: 1, maximum: 1000, default: 100}
+  responses:
+    BadRequest:
+      description: Invalid request
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    NotFound:
+      description: Device or measurement not found
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+    Unavailable:
+      description: Database unavailable or request deadline exceeded
+      content:
+        application/json:
+          schema: {$ref: '#/components/schemas/Error'}
+  schemas:
+    Identifier:
+      type: string
+      pattern: '^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$'
+    DeviceInput:
+      type: object
+      additionalProperties: false
+      required: [id, name, expected_interval_seconds]
+      properties:
+        id: {$ref: '#/components/schemas/Identifier'}
+        name: {type: string, minLength: 1, maxLength: 200}
+        expected_interval_seconds: {type: integer, minimum: 1, maximum: 86400}
+    Device:
+      type: object
+      required: [id, name, expected_interval_seconds, created_at, last_seen_at]
+      properties:
+        id: {$ref: '#/components/schemas/Identifier'}
+        name: {type: string}
+        expected_interval_seconds: {type: integer}
+        created_at: {type: string, format: date-time}
+        last_seen_at:
+          type: [string, 'null']
+          format: date-time
+    Event:
+      type: object
+      required: [measurement, received_at]
+      properties:
+        measurement: {$ref: '../contracts/telemetry-v1.schema.json'}
+        received_at: {type: string, format: date-time}
+    Error:
+      type: object
+      required: [code, request_id]
+      properties:
+        code: {type: string}
+        request_id: {type: string}

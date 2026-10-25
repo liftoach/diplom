@@ -1,0 +1,126 @@
+name: diplom
+
+x-app: &app
+  init: true
+  restart: unless-stopped
+  stop_grace_period: 20s
+  environment: &environment
+    DATABASE_URL: postgres://telemetry:telemetry@database:5432/telemetry?sslmode=disable
+    MQTT_URL: tcp://mqtt:1883
+    KAFKA_BROKERS: kafka:9092
+  depends_on:
+    database:
+      condition: service_healthy
+    kafka-init:
+      condition: service_completed_successfully
+    mqtt:
+      condition: service_started
+
+services:
+  database:
+    image: timescale/timescaledb:2.30.1-pg17
+    environment:
+      POSTGRES_USER: telemetry
+      POSTGRES_PASSWORD: telemetry
+      POSTGRES_DB: telemetry
+    ports: ["127.0.0.1:5432:5432"]
+    volumes:
+      - database-data:/var/lib/postgresql/data
+      - ../migrations/001_initial.sql:/docker-entrypoint-initdb.d/001_initial.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U telemetry -d telemetry"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  mqtt:
+    image: eclipse-mosquitto:2.0.22
+    ports: ["127.0.0.1:1883:1883"]
+    volumes:
+      - ./mosquitto/mosquitto.conf:/mosquitto/config/mosquitto.conf:ro
+      - mqtt-data:/mosquitto/data
+
+  kafka:
+    image: apache/kafka:4.2.2
+    hostname: kafka
+    environment:
+      KAFKA_NODE_ID: 1
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_LISTENERS: INTERNAL://:9092,CONTROLLER://:9093,EXTERNAL://:19092
+      KAFKA_ADVERTISED_LISTENERS: INTERNAL://kafka:9092,EXTERNAL://localhost:19092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: INTERNAL:PLAINTEXT,CONTROLLER:PLAINTEXT,EXTERNAL:PLAINTEXT
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_INTER_BROKER_LISTENER_NAME: INTERNAL
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "false"
+      KAFKA_LOG_DIRS: /var/lib/kafka/data
+      KAFKA_HEAP_OPTS: -Xms512m -Xmx512m
+      CLUSTER_ID: MkU3OEVBNTcwNTJENDM2Qk
+    ports: ["127.0.0.1:19092:19092"]
+    volumes: ["kafka-data:/var/lib/kafka/data"]
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/kafka/bin/kafka-topics.sh --bootstrap-server localhost:9092 --list >/dev/null 2>&1"]
+      interval: 10s
+      timeout: 10s
+      retries: 30
+
+  kafka-init:
+    image: apache/kafka:4.2.2
+    depends_on:
+      kafka:
+        condition: service_healthy
+    entrypoint: ["/bin/bash", "-ec"]
+    command:
+      - |
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic telemetry.valid.v1 --partitions 3 --replication-factor 1 --config retention.ms=86400000
+        /opt/kafka/bin/kafka-topics.sh --bootstrap-server kafka:9092 --create --if-not-exists --topic telemetry.invalid.v1 --partitions 1 --replication-factor 1 --config retention.ms=86400000
+
+  ingestion:
+    <<: *app
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args: {SERVICE: ingestion}
+    ports: ["127.0.0.1:8081:8081"]
+
+  processor:
+    <<: *app
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args: {SERVICE: processor}
+    ports: ["127.0.0.1:8082:8082"]
+
+  api:
+    <<: *app
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args: {SERVICE: api}
+    ports: ["127.0.0.1:8080:8080"]
+
+  simulator:
+    <<: *app
+    profiles: ["demo"]
+    restart: "no"
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args: {SERVICE: simulator}
+    environment:
+      <<: *environment
+      API_URL: http://api:8080
+    command: ["-devices=10", "-interval=1s", "-rounds=0"]
+    ports: ["127.0.0.1:8083:8083"]
+    depends_on:
+      api: {condition: service_started}
+      ingestion: {condition: service_started}
+      processor: {condition: service_started}
+
+volumes:
+  database-data:
+  mqtt-data:
+  kafka-data:

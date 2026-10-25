@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Single-phase electrical measurement v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "message_id", "device_id", "session_id", "sequence", "timestamp", "voltage_v", "current_a", "active_power_w", "power_factor", "temperature_c"],
+  "$defs": {
+    "identifier": {"type": "string", "pattern": "^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$"}
+  },
+  "properties": {
+    "schema_version": {"const": 1},
+    "message_id": {"$ref": "#/$defs/identifier"},
+    "device_id": {"$ref": "#/$defs/identifier"},
+    "session_id": {"$ref": "#/$defs/identifier"},
+    "sequence": {"type": "integer", "minimum": 1, "maximum": 9223372036854775807},
+    "timestamp": {"type": "string", "format": "date-time"},
+    "voltage_v": {"type": "number", "exclusiveMinimum": 0, "maximum": 1000},
+    "current_a": {"type": "number", "minimum": 0, "maximum": 10000},
+    "active_power_w": {"type": "number", "minimum": 0},
+    "power_factor": {"type": "number", "exclusiveMinimum": 0, "maximum": 1},
+    "temperature_c": {"type": "number", "minimum": -100, "maximum": 300}
+  },
+  "$comment": "Runtime also checks payload <=4096 bytes, topic/device match, device registration, age <=24h, future skew <=30s, and P=U*I*power_factor within max(1W,2%)."
+}
