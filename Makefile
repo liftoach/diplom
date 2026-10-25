@@ -3,6 +3,9 @@
 GO ?= go
 DOCKER ?= docker
 POWERSHELL ?= pwsh
+BASH ?= bash
+export GO
+export DOCKER
 COMPOSE = $(DOCKER) compose -f deploy/compose.yaml
 
 DEVICES ?= 10
@@ -33,8 +36,8 @@ help:
 	@echo make check             - Run unit tests and go vet
 	@echo make test-race         - Run unit tests with race detector and vet in Docker
 	@echo make test-integration  - Run database and pipeline tests against the running stack
-	@echo make smoke             - Wait for readiness and run integration tests, requires PowerShell 7
-	@echo make recovery          - Verify processor recovery, requires PowerShell 7 and the running stack
+	@echo make smoke             - Wait for readiness and run integration tests
+	@echo make recovery          - Verify processor recovery against the running stack
 
 build:
 	$(GO) build -o bin/ ./cmd/...
@@ -83,8 +86,16 @@ test-race:
 test-integration:
 	$(GO) test -tags=integration -count=1 -v ./internal/storage ./tests/e2e
 
+ifeq ($(OS),Windows_NT)
 smoke:
 	$(POWERSHELL) -NoProfile -File scripts/smoke.ps1
 
 recovery:
 	$(POWERSHELL) -NoProfile -File scripts/verify-recovery.ps1
+else
+smoke:
+	$(BASH) scripts/smoke.sh
+
+recovery:
+	$(BASH) scripts/verify-recovery.sh
+endif

@@ -16,7 +16,7 @@ Simulator → Mosquitto (MQTT QoS 1) → Ingestion → Kafka → Processor → T
 
 ## Требования
 
-- Docker Desktop с Linux containers и Docker Compose v2.
+- Docker Engine с плагином Compose на Ubuntu либо Docker Desktop с Linux containers на Windows.
 - Для локальных Go-команд: Go 1.26.3 или совместимый более новый выпуск.
 - Свободные порты 1883, 5432, 8080–8083, 19092.
 - Для комфортного запуска стенда рекомендуется выделить Docker не менее 4 CPU и 6 ГБ RAM;
@@ -28,8 +28,9 @@ Simulator → Mosquitto (MQTT QoS 1) → Ingestion → Kafka → Processor → T
 
 Для сокращённых команд установите GNU Make и выполняйте `make` из корня
 репозитория. На Windows Makefile также совместим с `mingw32-make`.
-Цели `smoke` и `recovery` дополнительно требуют PowerShell 7 (`pwsh`).
-Остальные команды вызывают Go и Docker напрямую и не требуют Bash.
+На Windows цели `smoke` и `recovery` используют PowerShell 7 (`pwsh`),
+на Ubuntu — Bash-скрипты. Для Linux-проверок нужны `curl`, а для `recovery` также `jq`.
+Остальные команды вызывают Go и Docker напрямую.
 
 ```powershell
 make help
@@ -49,10 +50,64 @@ make down
 Не запускайте `recovery` параллельно с остальными сквозными проверками.
 `make down` сохраняет данные в volumes. `make restart SERVICES=processor`
 перезапускает только выбранный сервис; изменение кода применяется через `make up`.
-Переопределять инструменты можно через `GO`, `DOCKER`, `POWERSHELL`, а адрес
+Переопределять инструменты можно через `GO`, `DOCKER`, `POWERSHELL`, `BASH`, а адрес
 тестовой БД — через `TEST_DATABASE_URL`.
 
-## Запуск
+## Запуск из Ubuntu
+
+Установите Docker Engine вместе с плагинами Compose и Buildx по
+[официальной инструкции Docker для Ubuntu](https://docs.docker.com/engine/install/ubuntu/).
+Для следующих команд `docker info` должен выполняться от вашего пользователя;
+настройка доступа описана в
+[Linux post-install](https://docs.docker.com/engine/install/linux-postinstall/).
+Для запуска контейнеров Go на хосте не требуется.
+
+```bash
+sudo apt update
+sudo apt install -y make curl jq git
+
+cd /path/to/diplom
+docker info
+docker compose version
+make config
+make up
+make ps
+
+# Дождитесь MQTT-подписки приёмника перед отправкой:
+until curl -fsS http://localhost:8081/health/ready >/dev/null; do sleep 1; done
+make simulate DEVICES=10 INTERVAL=1s ROUNDS=3
+curl -fsS http://localhost:8080/api/v1/devices | jq
+curl -fsS http://localhost:8080/api/v1/devices/meter-000001/latest | jq
+```
+
+Вместо `/path/to/diplom` укажите путь к клонированному репозиторию. При первом
+старте важно дождаться readiness приёмника: иначе сообщения, отправленные
+до создания MQTT-подписки, могут не попасть в обработку.
+
+Для непрерывной демонстрации: `make demo`. Для остановки с сохранением данных:
+`make down`. Метрики и API доступны по тем же localhost-портам, что на Windows.
+
+Проверки на Ubuntu:
+
+```bash
+# Требуются Docker и работающий стенд; Go на хосте не нужен:
+make recovery
+make test-race
+
+# Дополнительно требуется установленный Go 1.26.3 или совместимый более новый:
+make check
+make smoke
+```
+
+`make smoke` сам ожидает readiness сервисов. Его время ожидания можно изменить:
+`TIMEOUT_SECONDS=180 make smoke`. Скрипты также запускаются непосредственно:
+`bash scripts/smoke.sh` и `bash scripts/verify-recovery.sh`.
+
+Для Ubuntu в WSL2 включите интеграцию своего дистрибутива с Docker Desktop
+и выполняйте Linux-команды в терминале Ubuntu. Путь к этому проекту на диске D:
+обычно `/mnt/d/diplom`.
+
+## Запуск из Windows / PowerShell
 
 ```powershell
 docker compose -f deploy/compose.yaml up -d --build
